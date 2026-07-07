@@ -18,7 +18,7 @@ import io
 import pandas as pd
 import streamlit as st
 
-from lead_scraper import fetch_google_places, fetch_yelp, dedup_key
+from lead_scraper import fetch_google_places, fetch_yelp, dedup_key, enrich_rows
 
 st.set_page_config(page_title="Lead Scraper", page_icon="🔍", layout="wide")
 
@@ -65,6 +65,14 @@ with col4:
     use_yelp = st.checkbox("Search Yelp", value=True)
 with col5:
     limit = st.number_input("Max results per search", min_value=5, max_value=60, value=20, step=5)
+
+use_enrich = st.checkbox(
+    "Enrich websites (fetch contact email + social links)",
+    value=False,
+    help="After searching, visit each lead's website to pull a public contact "
+         "email and Instagram/Facebook/LinkedIn/Twitter links. Respects "
+         "robots.txt. Slower, since it makes an extra request per website.",
+)
 
 run_button = st.button("Run Search", type="primary")
 
@@ -129,6 +137,14 @@ if run_button:
                 continue
             seen.add(key)
             deduped.append(row)
+
+        if use_enrich and deduped:
+            enrich_progress = st.progress(0, text="Enriching websites...")
+            cache = {}
+            for i, row in enumerate(deduped, start=1):
+                enrich_rows([row], cache=cache)
+                enrich_progress.progress(i / len(deduped), text=f"Enriching websites ({i}/{len(deduped)})")
+            enrich_progress.empty()
 
         st.session_state.results_df = pd.DataFrame(deduped)
         st.success(f"Found {len(all_rows)} raw results, {len(deduped)} after removing duplicates.")

@@ -19,6 +19,7 @@ Usage:
     --output      Output CSV file path (default: leads.csv)
     --sources     Comma separated sources to use: google,yelp (default: both)
     --limit       Max results per term/location/source combo (default: 20, max 20 per Yelp page, Google returns up to 60 via pagination)
+    --enrich      Visit each lead's website to extract a contact email and social media links (respects robots.txt)
 """
 
 import argparse
@@ -27,6 +28,8 @@ import os
 import sys
 import time
 import requests
+
+from enrichment import enrich_website
 
 
 GOOGLE_PLACES_TEXTSEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
@@ -222,7 +225,34 @@ def fetch_yelp(term, location, api_key, limit=20):
     return results
 
 
-def run(terms, locations, sources, google_key, yelp_key, limit, output_path):
+ENRICHMENT_FIELDS = ["email", "instagram", "facebook", "linkedin", "twitter"]
+
+
+def enrich_rows(rows, cache=None):
+    """Populate contact email + social links for each row from its website.
+
+    Rows are enriched in place. A per-run cache keyed on the website URL avoids
+    re-fetching the same site when several leads share a domain.
+    """
+    if cache is None:
+        cache = {}
+    for row in rows:
+        website = row.get("website", "")
+        for field in ENRICHMENT_FIELDS:
+            row.setdefault(field, "")
+        if not website:
+            continue
+        if website in cache:
+            enriched = cache[website]
+        else:
+            enriched = enrich_website(website)
+            cache[website] = enriched
+        for field in ENRICHMENT_FIELDS:
+            row[field] = enriched.get(field, "")
+    return rows
+
+
+def run(terms, locations, sources, google_key, yelp_key, limit, output_path, enrich=False):
     all_rows = []
     seen = set()
 
@@ -258,9 +288,18 @@ def run(terms, locations, sources, google_key, yelp_key, limit, output_path):
         seen.add(key)
         deduped_rows.append(row)
 
+    if enrich:
+        print(f"[enrich] fetching websites for {len(deduped_rows)} leads...")
+        enrich_rows(deduped_rows)
+
     fieldnames = ["name", "address", "city", "state", "phone", "website", "category", "rating", "review_count", "source", "search_term", "search_location"]
+    if enrich:
+        # Slot the enrichment columns next to website, before the metadata tail.
+        website_idx = fieldnames.index("website") + 1
+        fieldnames = fieldnames[:website_idx] + ENRICHMENT_FIELDS + fieldnames[website_idx:]
+
     with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(deduped_rows)
 
@@ -275,6 +314,7 @@ def main():
     parser.add_argument("--sources", default="google,yelp", help="Comma separated sources to use: google,yelp")
     parser.add_argument("--output", default="leads.csv", help="Output CSV file path")
     parser.add_argument("--limit", type=int, default=20, help="Max results per term/location/source combo")
+    parser.add_argument("--enrich", action="store_true", help="Visit each lead's website to extract a contact email and social media links (respects robots.txt)")
     parser.add_argument("--google-key", default=os.environ.get("GOOGLE_PLACES_API_KEY"), help="Google Places API key (or set GOOGLE_PLACES_API_KEY env var)")
     parser.add_argument("--yelp-key", default=os.environ.get("YELP_API_KEY"), help="Yelp Fusion API key (or set YELP_API_KEY env var)")
 
@@ -284,7 +324,7 @@ def main():
     locations = [l.strip() for l in args.locations.split(",") if l.strip()]
     sources = [s.strip().lower() for s in args.sources.split(",") if s.strip()]
 
-    run(terms, locations, sources, args.google_key, args.yelp_key, args.limit, args.output)
+    run(terms, locations, sources, args.google_key, args.yelp_key, args.limit, args.output, enrich=args.enrich)
 
 
 if __name__ == "__main__":

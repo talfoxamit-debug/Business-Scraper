@@ -29,6 +29,22 @@ Each lead record contains:
 Deduplication is keyed on the normalized phone number (digits only), falling
 back to a lowercased `name` + `address` composite when no phone is present.
 
+### Website enrichment (optional)
+
+With enrichment enabled (`--enrich` on the CLI, or the checkbox in the app),
+each lead's website is visited to add these columns (slotted after `website`):
+
+| field | description |
+|-------|-------------|
+| `email` | public contact email (prefers `mailto:` links) |
+| `instagram` / `facebook` / `linkedin` / `twitter` | first real profile link found |
+
+Enrichment fetches the homepage and, if no email is found there, one linked
+contact/about page — at most two page GETs (plus a `robots.txt` check) per site.
+It **respects robots.txt** and sends a descriptive, non-spoofed User-Agent. Sites
+sharing a domain are fetched only once per run. It's off by default because it
+makes an extra request per lead.
+
 ## Setup
 
 ```bash
@@ -63,6 +79,7 @@ python3 lead_scraper.py \
 | `--sources` | `google,yelp` (default: both) |
 | `--output` | output CSV path (default: `leads.csv`) |
 | `--limit` | max results per term/location/source combo (default: 20) |
+| `--enrich` | visit each lead's website for a contact email + social links (respects robots.txt) |
 | `--google-key` / `--yelp-key` | override the env-var keys |
 
 ### Streamlit app
@@ -88,7 +105,7 @@ live API keys or network access.
 
 ## Roadmap
 
-See `PROJECT_HANDOFF.md` §5 for the full backlog. Near-term priorities after the
-current structured-fields work: website enrichment (contact email + social
-links), SQLite storage with the dedup key as a unique constraint, and
-email/phone validation.
+See `PROJECT_HANDOFF.md` §5 for the full backlog. Structured fields
+(category/city/state) and website enrichment (contact email + social links) are
+done. Next up: SQLite storage with the dedup key as a unique constraint, and
+email/phone validation (email format + MX check, phone → E.164).
